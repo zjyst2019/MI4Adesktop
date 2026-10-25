@@ -110,8 +110,9 @@ they are evidence for a compatibility strategy, not proof this device behaves id
 
 This TV has no Android 7+ `cmd package set-home-activity` command and no standard
 HOME_SETTINGS handler. The Home helper binds, but stock Home accessibility events
-were absent in this session. Injected Home keys did not reach its key callback.
-A direct native Home remap has NOT been established.
+are unreliable here. Injected Home keys do not reach its key callback; the physical
+remote does when key_filter=true, which is how 2.6.3 intercepts Home before PatchWall
+starts. A true system-level default Home replacement is NOT possible without root.
 
 The independent port now includes a local UsageStats fallback in HomeKeyService:
 
@@ -125,23 +126,26 @@ The independent port now includes a local UsageStats fallback in HomeKeyService:
   BootActivity, settings or video-player classes. Each foreground event gets one
   attempt; evidence older than two minutes is rejected.
 - Global key filtering is on in the local Xmen build to intercept the physical Home key
-  before PatchWall starts (config.xml key_filter=true). Revert to false if holding volume
-  no longer repeats; some firmware drops key auto-repeat once a service filters keys.
-  Home can still briefly show PatchWall before the one-second fallback returns.
+  before PatchWall starts (config.xml key_filter=true). On the target MiTV4A the physical
+  Home key then opens this port directly; holding volume still repeats. Revert to false if
+  holding volume no longer repeats; some firmware drops key auto-repeat once a service
+  filters keys. With key_filter=false, Home falls back to the one-second UsageStats path
+  and PatchWall can be visible briefly.
 - This local port also drops FLAG_ACTIVITY_RESET_TASK_IF_NEEDED from the helper's
   startActivity. With clearTaskOnLaunch it recreated the task on every Home press
   (~3 s on the target TV); NEW_TASK alone resumes in under 200 ms (`am start -W`).
-- On-device HOME injection: three-second screenshot showed stock Home, later
-  screenshot/window focus showed this port; log recorded `usage foreground (1s)`.
-  Settings stayed in front for a 12-second observation. Media-browser launch did
-  not acquire focus during that test, so media no-interruption is unverified.
+- On-device HOME injection (this does not exercise key_filter): a three-second screenshot
+  showed stock Home, later focus showed this port; log recorded `usage foreground (1s)`.
+  Settings stayed in front for a 12-second observation. The physical remote with
+  key_filter=true was verified separately on 2026-10-25 and opens this port directly.
+  Media-browser launch did not acquire focus during the injection test, so
+  media-no-interruption is unverified.
 - Stock Home stays enabled; no system package was disabled or uninstalled and the
-  framework default has not been changed. One software reboot passed: events
-  show stock Home then this port, helper/usage access persisted, and two read-only
-  focus checks at about 144/168 seconds uptime both showed this port. Post-reboot
-  Home events also returned here after the fallback delay (1 s in this local build); subsequent Quark launches
-  during overlapping device use mean final screenshots alone are not reliable.
-  Power-disconnect cold boot, physical remote and HDMI/playback remain unverified.
+  framework default has not been changed. A 2026-10-25 reboot passed: the stock HOME
+  started, this port came to the front about 1.1 s later, helper/usage access persisted,
+  and the owner reported almost no PatchWall. Physical remote, D-pad, long-press volume
+  and a software reboot were verified in that session. Power-disconnect cold boot and
+  HDMI/playback remain unverified.
 
 Enable only after the explicit owner decision, preserving other enabled services:
 `com.peter.tvhome.xmen/com.gathin.tvhome.HomeKeyService`. Usage access uses
