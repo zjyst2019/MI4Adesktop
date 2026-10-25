@@ -13,6 +13,26 @@ This is not a disable list. **Every shell disable channel is refused on this fir
 below. Do not run `tools/disable.sh` here, and do not run a full `tools/restore.sh`.
 Nothing in this note uninstalls or disables a package.
 
+## 2026-10-25: 2.6.3 and Home takeover
+
+The API 23 port in this repository (`launcher/`, package `com.peter.tvhome.xmen`) was installed
+as **2.6.3 / versionCode 10** on 2026-10-25. The stock launcher `com.mitv.tvhome` stayed enabled;
+no package was disabled or uninstalled, and no root was used.
+
+Home takeover uses the optional `HomeKeyService` (accessibility + `GET_USAGE_STATS`) plus the
+2.6.3 build with `key_filter=true`:
+
+- Physical Home is consumed before PatchWall starts, so the custom launcher opens directly.
+- Boot has no Home key to intercept: the stock HOME starts first and the helper switches about
+  1.1 s later. The owner reported almost no PatchWall on the real TV.
+- Verified on the TV: physical Home, boot, D-pad, long-press volume repeat and a reboot.
+- Injected `input keyevent KEYCODE_HOME` does not exercise the key-filter path; use the physical
+  remote for this check.
+
+To undo: restore the original `enabled_accessibility_services` value, set
+`appops set com.peter.tvhome.xmen GET_USAGE_STATS default`, then uninstall the app from the TV's
+own Settings. Do not touch `com.mitv.tvhome`.
+
 ## Blocked: all shell disable channels
 
 | Channel | Result |
@@ -71,15 +91,11 @@ These are the TV's own settings, not a disable list; record the value before cha
 
 ## Launcher
 
-The launcher in this repository is `minSdk 26` and this set is SDK 23, so the published build
-refuses to install (`INSTALL_FAILED_OLDER_SDK`). This host has no JDK, Android SDK or Gradle
-cache by default either.
-
-The API 23 port lives outside this repository: [Xmen Android 6 port](https://github.com/yukunwu/cleanyourtv/tree/xmen-android6/ports/xmen-android6)
-(`com.peter.tvhome.xmen`, minSdk 23, core-library desugaring, no INTERNET permission), already
-smoke-tested on the same board family. Building it needs JDK 17, Android SDK platform 34 and
-build-tools 34.0.0. It carries a UsageStats Home fallback that needs an explicit owner decision
-and the stock launcher left enabled; read its README before enabling anything.
+The API 23 port lives in this repository: `launcher/`, package `com.peter.tvhome.xmen`,
+minSdk 23, core-library desugaring, no INTERNET permission. Building needs JDK 17, Android SDK
+platform 34 and build-tools 34.0.0; see the top-level README. It carries an optional
+UsageStats + accessibility Home helper (2.6.3 also requests key filtering); the stock launcher
+must stay enabled. Read `launcher/README.md` before enabling anything.
 
 ## Settings screens worth noting
 

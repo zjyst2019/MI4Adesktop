@@ -13,11 +13,10 @@ param(
 $ErrorActionPreference = 'Stop'
 $py = 'python'
 
-Set-Location $port
 $env:PATH = "$env:JAVA_HOME\bin;$env:ANDROID_HOME\platform-tools;$env:PATH"
 
 '=== gradle: testReleaseUnitTest lintRelease assembleRelease ==='
-Push-Location (Join-Path $port 'launcher')
+Push-Location $port
 & .\gradlew.bat --no-daemon --console=plain testReleaseUnitTest lintRelease assembleRelease
 $gradleExit = $LASTEXITCODE
 Pop-Location
