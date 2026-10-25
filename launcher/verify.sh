@@ -5,7 +5,6 @@ cd "$(dirname "$0")"
 : "${ANDROID_HOME:?Set ANDROID_HOME to Android SDK with platform 34}"
 export PATH="$JAVA_HOME/bin:$PATH"
 (
-    cd launcher
     ./gradlew --no-daemon --console=plain testReleaseUnitTest lintRelease assembleRelease
 )
 python3 - <<'PY'
@@ -14,7 +13,7 @@ import xml.etree.ElementTree as ET
 import struct
 import zipfile
 
-base = Path('launcher/app/build')
+base = Path('app/build')
 android = '{http://schemas.android.com/apk/res/android}'
 manifest = ET.parse(base / 'intermediates/merged_manifest/release/processReleaseMainManifest/AndroidManifest.xml').getroot()
 assert manifest.get('package') == 'com.peter.tvhome.xmen'

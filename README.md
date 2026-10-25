@@ -34,14 +34,24 @@
 
 ## 编译
 
-需要：**JDK 17**、**Android SDK platform 34**、**build-tools 34.0.0**、Python 3。
+仓库包含全部源码、Gradle wrapper（JAR + Gradle 8.9 的 sha256）、JVM 测试和构建脚本；
+新电脑不需要旧电脑的 `local.properties`、Gradle 缓存、Android SDK 或签名密钥，但需要自行安装：
 
-```bash
-# Windows（从仓库根目录）
+- **JDK 17**
+- **Android SDK platform 34** 和 **build-tools 34.0.0**（platform-tools 用于安装 APK）
+- **Python 3**（构建后的 APK 校验脚本使用）
+- 首次构建需要联网下载 Gradle 8.9 和 Maven 依赖
+
+完整的从零安装步骤、代理/离线说明、版本锁定和常见问题见 **[docs/BUILD.md](docs/BUILD.md)**。
+
+```powershell
+# Windows（PowerShell 5.1 或 7，从仓库根目录）
 $env:JAVA_HOME    = 'C:\path\to\jdk17'
 $env:ANDROID_HOME = 'C:\path\to\android-sdk'
-pwsh .\tools\build-xmen-api23.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\build-xmen-api23.ps1
+```
 
+```sh
 # Linux / macOS
 export JAVA_HOME=/path/to/jdk17
 export ANDROID_HOME=/path/to/android-sdk
@@ -198,6 +208,7 @@ apk/
   com.peter.tvhome.xmen-2.6.3-xmen-api23.apk  当前版本
   MD5SUMS.txt                                  APK 校验值
 docs/
+  BUILD.md                   从零构建与外部依赖说明
   xiaomi-mitv4-xmen-2061.md  这台电视的探测记录
 tools/
   build-xmen-api23.ps1     编译 + 验证（Windows）
@@ -214,6 +225,6 @@ tools/
 
 ## 许可
 
-继承上游 CleanYourTV 的 MIT 许可，见 `LICENSE`。
+继承上游 CleanYourTV 的 MIT 许可，见 `launcher/LICENSE`。
 `launcher/app/src/main/res/font/outfit.ttf` 使用 SIL Open Font License，见
 `launcher/FONT-LICENSE-OFL.txt`。
