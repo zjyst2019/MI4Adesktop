@@ -1,0 +1,27 @@
+# Gradle / Android build output
+build/
+.gradle/
+local.properties
+*.apk.idsig
+captures/
+.cxx/
+
+# IDE
+.idea/
+*.iml
+.DS_Store
+
+# Local notes and device data: never commit a Wi-Fi name, an IP, a serial
+# number, an account or an ADB key.
+work/
+backup/
+shots/
+adbkey
+adbkey.pub
+*.jks
+*.keystore
+
+# Python
+__pycache__/
+*.pyc
+tools/venv/

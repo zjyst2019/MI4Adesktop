@@ -1,0 +1,11 @@
+launcher/.gradle/
+launcher/build/
+launcher/app/build/
+launcher/local.properties
+work/
+backup/
+shots/
+__pycache__/
+*.apk
+*.aab
+.DS_Store

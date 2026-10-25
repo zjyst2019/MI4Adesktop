@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Lint for the launcher. CI runs lintRelease; keep it at zero errors. -->
+<lint>
+    <issue id="NewApi" severity="error" />
+    <issue id="InlinedApi" severity="error" />
+    <!-- A string missing from a values-* folder falls back to English by design: translations arrive
+         one language at a time from contributors, and a partial one is better than none. -->
+    <issue id="MissingTranslation" severity="informational" />
+</lint>

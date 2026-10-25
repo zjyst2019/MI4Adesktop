@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Platform resource fonts require API 26. API 23 uses native system families. -->
+    <string name="font_body" translatable="false">sans-serif</string>
+    <string name="font_regular" translatable="false">sans-serif</string>
+    <string name="font_light" translatable="false">sans-serif-light</string>
+    <string name="font_extralight" translatable="false">sans-serif-thin</string>
+    <string name="font_medium" translatable="false">sans-serif-medium</string>
+</resources>
