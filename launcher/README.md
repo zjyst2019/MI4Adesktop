@@ -111,8 +111,10 @@ they are evidence for a compatibility strategy, not proof this device behaves id
 This TV has no Android 7+ `cmd package set-home-activity` command and no standard
 HOME_SETTINGS handler. The Home helper binds, but stock Home accessibility events
 are unreliable here. Injected Home keys do not reach its key callback; the physical
-remote does when key_filter=true, which is how 2.6.3 intercepts Home before PatchWall
-starts. A true system-level default Home replacement is NOT possible without root.
+remote does when key_filter=true, which is how this port intercepts Home before
+PatchWall starts. A true system-level default Home replacement is NOT possible without
+root. This firmware's first accessibility bind after a boot does not enable key
+filtering at all; 2.6.7 forces one fresh bind from Home (see below).
 
 The independent port now includes a local UsageStats fallback in HomeKeyService:
 
@@ -134,6 +136,20 @@ The independent port now includes a local UsageStats fallback in HomeKeyService:
 - This local port also drops FLAG_ACTIVITY_RESET_TASK_IF_NEEDED from the helper's
   startActivity. With clearTaskOnLaunch it recreated the task on every Home press
   (~3 s on the target TV); NEW_TASK alone resumes in under 200 ms (`am start -W`).
+- **The first accessibility bind after a boot does not filter keys on this firmware.**
+  The helper is enabled, connected, and receives stock-Home window events, but the
+  physical Home key still goes to PatchWall; calling `setServiceInfo` with
+  `FLAG_REQUEST_FILTER_KEY_EVENTS` again does not restore it. A bind made later (the
+  service re-enabled by hand, or after an install) does filter. Since 2.6.7 Home
+  forces that fresh bind once per boot-time process: it takes only its own component
+  off `enabled_accessibility_services`, puts the exact original string back two
+  seconds later (three retries), and leaves the voice/karaoke entries untouched. This
+  needs `WRITE_SECURE_SETTINGS`, granted by hand after install (see below); without it
+  the helper logs that filtering can stay off and the UsageStats redirect is all that
+  remains. Verified on the target TV after a reboot with raw evdev Home presses from
+  inside an app (the same input device as the remote; `input keyevent` bypasses
+  accessibility filtering and proves nothing): `Opened HOME: remote HOME key`, no
+  stock-Home launch, focus back on this port, over 10+ cycles.
 - On-device HOME injection (this does not exercise key_filter): a three-second screenshot
   showed stock Home, later focus showed this port; log recorded `usage foreground (1s)`.
   Settings stayed in front for a 12-second observation. The physical remote with
@@ -149,12 +165,14 @@ The independent port now includes a local UsageStats fallback in HomeKeyService:
 
 Enable only after the explicit owner decision, preserving other enabled services:
 `com.peter.tvhome.xmen/com.gathin.tvhome.HomeKeyService`. Usage access uses
-`appops set com.peter.tvhome.xmen GET_USAGE_STATS allow`. To undo, remove just that
-service from `enabled_accessibility_services` and set the op back to its recorded
-state (initially no operation/default). Preserve the voice/other service entries.
-The private session keeps an executable restore script and pre-change backups;
-none belong in published source. Reinstall/force-stop and firmware updates may
-unbind the helper; recheck binding rather than assuming persistent operation.
+`appops set com.peter.tvhome.xmen GET_USAGE_STATS allow`, and the post-boot rebind
+needs `pm grant com.peter.tvhome.xmen android.permission.WRITE_SECURE_SETTINGS`.
+To undo, remove just that service from `enabled_accessibility_services`, revoke the
+grant and set the op back to its recorded state (initially no operation/default).
+Preserve the voice/other service entries. The private session keeps an executable
+restore script and pre-change backups; none belong in published source.
+Reinstall/force-stop and firmware updates may unbind the helper; recheck binding
+rather than assuming persistent operation.
 
 ## License
 

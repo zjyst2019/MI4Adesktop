@@ -6,9 +6,10 @@
 这是 [CleanYourTV](https://github.com/Gathin23/cleanyourtv) 启动器的一个 API 23 移植版本。
 上游的启动器是 `minSdk 26`（Android 8.0），装不上 Android 6 的电视，所以有了这个仓库。
 
-**当前版本**：2.6.3（versionCode 10）
+**当前版本**：2.6.7（versionCode 14）
 **当前状态**：可编译、可安装；在 MiTV4A 上实体遥控器的 Home 键可接管，按 Home 不再闪 PatchWall；
-开机约 1.1 秒后切到自建桌面。原桌面保持启用，不卸载、不禁用、不需要 root。
+开机约 1.1 秒后切到自建桌面，且**重启后 Home 键仍持续生效**（2.6.7 修复）。原桌面保持启用，
+不卸载、不禁用、不需要 root。
 
 ## 它是什么
 
@@ -31,6 +32,28 @@
 第 3 项会请求全局按键过滤。部分固件（已知 TCL Google TV 12）在启用后会丢失按键连发；
 本机 MiTV4A 实测长按音量仍能连续调节。若你的电视出现连发丢失，把 `key_filter` 改回
 `false` 重新编译即可，Home 会退回“先显示原桌面、约 1 秒后切换”的行为。
+
+### 2.6.7：修复开机后 Home 回到 PatchWall
+
+**根因**：这台固件在开机后的**第一次无障碍绑定不会启用按键过滤**。服务已启用、已绑定，
+也能收到 PatchWall 的窗口事件，但实体 Home 键仍然落到 `com.mitv.tvhome`；再次调用
+`setServiceInfo(FLAG_REQUEST_FILTER_KEY_EVENTS)` 也无效，只有让系统**重新绑定服务**
+（手动关/开无障碍，或重装 APK）后才恢复。过滤失效时，UsageStats 兜底发出
+`startActivity` 还会被 MIUI 拦截（`Activity start request from <uid> stopped`），
+所以电视会停在 PatchWall，而不是 1 秒后切回来。
+
+**修复**：`MainActivity.onResume()` 调用 `HomeKeyService.ensureKeyFilter()`。如果当前进程
+是在开机 5 分钟内启动的（即承载开机那次绑定），第一次回到桌面时强制重绑一次：只把自己的
+组件从 `enabled_accessibility_services` 移除，2 秒后写回**原始完整字符串**（失败重试 3 次），
+语音/K 歌等服务原样保留。每个进程只执行一次，用户自己关掉助手时不会动无障碍列表。
+
+该操作需要 `WRITE_SECURE_SETTINGS`，安装后授予一次（权限跨重启保留），见“启用 Home 接管”。
+未授予时助手会写日志并跳过，只能退回 UsageStats 兜底。
+
+验证时注意：`input keyevent 3` 注入的 Home **不经过**无障碍过滤，不能用来判断修复是否生效；
+要用实体遥控器，或用与遥控器同一输入设备的 `sendevent`（本机为 `/dev/input/event4`
+`KEY_HOME` 102）。重启后连续测试 10+ 次：日志均为 `Opened HOME: remote HOME key`，
+系统日志没有 stock HOME 启动，焦点始终回到自建桌面。
 
 ## 编译
 
@@ -69,7 +92,7 @@ Gradle wrapper 固定在 8.9 并校验 sha256。Release 产物在
 
 ```bash
 adb connect <tv ip>:5555
-adb install -r apk/com.peter.tvhome.xmen-2.6.3-xmen-api23.apk
+adb install -r apk/com.peter.tvhome.xmen-2.6.7-xmen-api23.apk
 
 # 先当普通应用打开（不会抢 Home）
 adb shell am start -n com.peter.tvhome.xmen/com.gathin.tvhome.MainActivity
@@ -96,8 +119,11 @@ adb shell settings get secure enabled_accessibility_services
 adb shell settings put secure enabled_accessibility_services \
   '<原值>:com.peter.tvhome.xmen/com.gathin.tvhome.HomeKeyService'
 
-# 3. 授予使用情况访问
+# 3. 授予使用情况访问（UsageStats 兜底）
 adb shell appops set com.peter.tvhome.xmen GET_USAGE_STATS allow
+
+# 4. 授予安全设置写入权限（2.6.7 开机后强制重绑一次无障碍服务）
+adb shell pm grant com.peter.tvhome.xmen android.permission.WRITE_SECURE_SETTINGS
 ```
 
 MiTV4A 上原值示例（不同固件可能不同，以第 1 步读到的为准）：
@@ -115,17 +141,20 @@ adb shell dumpsys activity activities | grep mResumedActivity
 
 预期行为：
 
-- 按实体遥控器 Home：直接进入自建桌面，PatchWall 不出现。
+- 按实体遥控器 Home：直接进入自建桌面，PatchWall 不出现；重启后仍然如此。
 - 开机：原桌面先启动，Home 助手约 1.1 秒后切到自建桌面；实测几乎看不到 PatchWall。
+- 开机后第一次回到桌面时，助手会把自己的无障碍组件移除约 2 秒再写回，以恢复按键过滤；
+  这期间如果恰好按 Home，可能看到一次 PatchWall。
 - 撤销：把 `enabled_accessibility_services` 恢复为第 1 步的原值，执行
-  `appops set com.peter.tvhome.xmen GET_USAGE_STATS default`，再到电视“设置 → 应用”
-  里卸载自建桌面。原桌面从来没有被禁用，不需要恢复。
+  `appops set com.peter.tvhome.xmen GET_USAGE_STATS default` 和
+  `pm revoke com.peter.tvhome.xmen android.permission.WRITE_SECURE_SETTINGS`，
+  再到电视“设置 → 应用”里卸载自建桌面。原桌面从来没有被禁用，不需要恢复。
 
 ## 在 MiTV4A 上的实测结果
 
 | 项目 | 结果 |
 |---|---|
-| 版本 | 2.6.3 / versionCode 10 |
+| 版本 | 2.6.7 / versionCode 14 |
 | 安装 | `pm install` Success（电视上按一次安装确认） |
 | 启动 | 正常，中文界面完整渲染 |
 | 应用库 | 识别到 21 个应用，带“添加到主屏幕 / 已在主屏幕”状态 |
@@ -133,14 +162,15 @@ adb shell dumpsys activity activities | grep mResumedActivity
 | D-pad 四向 | RIGHT / LEFT / DOWN / UP 焦点均不丢失 |
 | 实体 Home | 直接进入自建桌面，PatchWall 不出现 |
 | 开机 | 原桌面启动后约 1.1 秒切换；机主确认几乎看不到 PatchWall |
+| 重启后 Home | 2.6.7 重启后从 App 里按 Home 仍由助手消费，PatchWall 不出现；连续 10+ 次一致 |
 | 音量连发 | 长按音量可连续调节 |
-| 重启 | Home 助手、使用情况访问、按键过滤均自动恢复 |
+| 重启 | Home 助手、使用情况访问、`WRITE_SECURE_SETTINGS` 均自动保留 |
 | 崩溃 | logcat 未发现 FATAL / AndroidRuntime 异常 |
 | 系统包 | 没有禁用或卸载任何系统包；原桌面仍启用 |
 | JVM 测试 / lint | 195 个测试通过；lint 0 Error |
-| APK | 708,401 字节（691.8 KiB） |
-| MD5 | `e733019d843ff81a36dcdeae0695bfe9` |
-| SHA-256 | `d486780b3f62d14899501649cc050708ecff84bbe4e9ef83ead42463a50c5f3b` |
+| APK | 709,414 字节（692.8 KiB） |
+| MD5 | `e286759e731a4f0adb8f25c9a3f41573` |
+| SHA-256 | `6cc8323998d28d4ea992bd3674037d201f6a2978724cd5cee160e560b717d424` |
 
 APK 使用调试密钥签名，只适合 sideload 到自己的电视，不要发布到应用商店。
 
@@ -205,7 +235,8 @@ launcher/                  启动器源码
   verify.sh                编译 + 验证（Linux/macOS）
 apk/
   com.peter.tvhome.xmen-2.6-xmen-api23.apk    历史版本
-  com.peter.tvhome.xmen-2.6.3-xmen-api23.apk  当前版本
+  com.peter.tvhome.xmen-2.6.3-xmen-api23.apk  历史版本
+  com.peter.tvhome.xmen-2.6.7-xmen-api23.apk  当前版本
   MD5SUMS.txt                                  APK 校验值
 docs/
   BUILD.md                   从零构建与外部依赖说明

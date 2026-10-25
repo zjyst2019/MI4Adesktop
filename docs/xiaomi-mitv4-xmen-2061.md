@@ -33,6 +33,39 @@ To undo: restore the original `enabled_accessibility_services` value, set
 `appops set com.peter.tvhome.xmen GET_USAGE_STATS default`, then uninstall the app from the TV's
 own Settings. Do not touch `com.mitv.tvhome`.
 
+## 2026-10-25 evening: 2.6.7, the first bind after boot does not filter keys
+
+With 2.6.3, Home started reaching PatchWall again after a reboot even with the helper enabled and
+`key_filter=true`. Diagnosis on the TV:
+
+- `dumpsys accessibility` showed the service with `capabilities=8` and
+  `eventTypes=TYPE_WINDOW_STATE_CHANGED`; the process was bound and the UsageStats fallback ran.
+- A raw evdev Home press (`sendevent /dev/input/event4 1 102 1`, the remote's own input device)
+  reached the window manager and started `com.mitv.tvhome/.MainActivityUserMode`; no
+  `Opened HOME: remote HOME key` log. `input keyevent 3` had already been known to bypass the
+  filter, so only the evdev press proves the state.
+- Re-enabling the service (remove/re-add its entry in `enabled_accessibility_services`) restored
+  filtering immediately. Calling `setServiceInfo` with `FLAG_REQUEST_FILTER_KEY_EVENTS` again did
+  not.
+- With filtering off, the UsageStats fallback's `startActivity` was refused on this firmware:
+  `W/ActivityManager: Activity start request from <uid> stopped`. The custom launcher returned
+  about 5 s later at best, so the TV appeared to stay on PatchWall.
+
+2.6.7 / versionCode 14 fixes it by forcing one fresh bind: `MainActivity.onResume()` calls
+`HomeKeyService.ensureKeyFilter()`, which (for a process started within 5 minutes of boot) removes
+only its own component from `enabled_accessibility_services`, restores the exact original string
+two seconds later with retries, and keeps every other service. It runs once per process and does
+nothing when the owner has disabled the helper. `WRITE_SECURE_SETTINGS` is required:
+
+```sh
+adb shell pm grant com.peter.tvhome.xmen android.permission.WRITE_SECURE_SETTINGS
+```
+
+Verified after a real reboot: raw evdev Home presses from inside an app logged
+`Opened HOME: remote HOME key`, started no stock HOME, and kept focus on the custom launcher over
+10+ cycles. The 2.6.7 APK in `apk/` built from this source; the package installed on the TV was
+built from the same source in the port tree (same size, different zip/timestamp MD5).
+
 ## Blocked: all shell disable channels
 
 | Channel | Result |

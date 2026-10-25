@@ -805,6 +805,9 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     @Override
     protected void onResume() {
         super.onResume();
+        // Android's first bind of the helper after boot is not filtering Home here; re-bind it once now
+        // that Home is on screen (HomeKeyService.ensureKeyFilter).
+        HomeKeyService.ensureKeyFilter();
         // A festival that started or ended while Home was in the background: rebuild with or without it.
         if (festive != festival.active(LocalDate.now())) {
             recreate();

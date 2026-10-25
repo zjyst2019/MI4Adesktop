@@ -8,6 +8,7 @@ import android.app.usage.UsageEvents;
 import android.app.usage.UsageStatsManager;
 import android.content.ActivityNotFoundException;
 import android.content.BroadcastReceiver;
+import android.content.ContentResolver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
@@ -21,12 +22,15 @@ import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.content.ComponentName;
 import android.provider.Settings;
+import android.text.TextUtils;
 import android.view.KeyEvent;
 import android.view.accessibility.AccessibilityEvent;
 import android.widget.Toast;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -61,6 +65,16 @@ public class HomeKeyService extends AccessibilityService {
     /** The stock launcher's HOME activities (stock_home_redirect), disabled ones included. */
     private final Set<String> stockHome = new HashSet<>();
     private String stockPackage = "";
+    /** The connected instance, so Home can re-apply the key filter after boot (ensureKeyFilter). */
+    private static HomeKeyService running;
+    /** config key_filter: whether this helper asks Android to filter keys. */
+    private boolean keyFilter = true;
+    /** When this process started, in uptime: early means the boot-time bind, which does not filter here. */
+    private static final long PROCESS_START_MS = android.os.SystemClock.elapsedRealtime();
+    /** How long after boot a process can be the boot-time bind (Home needs the forced rebind then). */
+    private static final long BOOT_BIND_WINDOW_MS = 5 * 60 * 1000L;
+    /** The one forced rebind has been requested: never toggle the accessibility list again in this process. */
+    private static boolean rebindRequested;
     private final Handler usageHandler = new Handler(Looper.getMainLooper());
     private final HomeForeground foreground = new HomeForeground();
     private long usageCursor;
@@ -75,6 +89,7 @@ public class HomeKeyService extends AccessibilityService {
     @Override
     protected void onServiceConnected() {
         super.onServiceConnected();
+        running = this;
         settingsScancodes = getResources().getIntArray(R.array.settings_key_scancodes);
         if (Build.VERSION.SDK_INT < 24) {
             loadConfig();
@@ -111,9 +126,90 @@ public class HomeKeyService extends AccessibilityService {
 
     @Override
     public void onDestroy() {
+        if (running == this) running = null;
         stopWaitingForUnlock();
         usageHandler.removeCallbacksAndMessages(null);
         super.onDestroy();
+    }
+
+    /**
+     * Makes sure the helper is actually filtering Home, called by Home from onResume. On this firmware the
+     * bind Android makes at boot leaves key filtering off: the service is listed and receives window events,
+     * but the physical Home key goes to the stock launcher, and setServiceInfo does not bring the filter
+     * back. A bind made later (the service re-enabled by hand, or after an install) does filter. So the first
+     * Home of a process started at boot asks the system to bind the helper again: it is taken off the
+     * enabled-accessibility list for two seconds and put straight back, as a manual re-enable does.
+     */
+    static void ensureKeyFilter() {
+        HomeKeyService service = running;
+        if (service == null || !service.keyFilter) return;
+        AccessibilityServiceInfo info = service.getServiceInfo();
+        // A copy written back at boot has kept the flag yet not filtered; the rebind below is what
+        // restores it. This only makes sure the request itself is never missing.
+        if (info != null && (info.flags & AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS) == 0) {
+            info.flags |= AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS;
+            service.setServiceInfo(info);
+        }
+        service.forceRebindAfterBoot();
+    }
+
+    /** One forced rebind per process, and only for a process that carries the boot-time bind. */
+    private void forceRebindAfterBoot() {
+        if (rebindRequested || PROCESS_START_MS >= BOOT_BIND_WINDOW_MS) return;
+        rebindRequested = true;
+        if (checkSelfPermission(android.Manifest.permission.WRITE_SECURE_SETTINGS)
+                != PackageManager.PERMISSION_GRANTED) {
+            android.util.Log.i("TvHome.Home",
+                    "Key filtering can stay off after boot: WRITE_SECURE_SETTINGS is not granted");
+            return;
+        }
+        ContentResolver resolver = getContentResolver();
+        String key = Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES;
+        final String list = Settings.Secure.getString(resolver, key);
+        if (list == null) return;
+        List<String> rest = new ArrayList<>();
+        boolean found = false;
+        for (String entry : list.split(":")) {
+            ComponentName component = ComponentName.unflattenFromString(entry.trim());
+            if (component != null && getPackageName().equals(component.getPackageName())
+                    && HomeKeyService.class.getName().equals(component.getClassName())) {
+                found = true;
+            } else if (!entry.trim().isEmpty()) {
+                rest.add(entry.trim());
+            }
+        }
+        if (!found) return;   // turned off by the owner: leave the list alone
+        // null clears the setting; Android reads that as "no services" just like an empty list.
+        String without = rest.isEmpty() ? null : TextUtils.join(":", rest);
+        try {
+            if (!Settings.Secure.putString(resolver, key, without)) {
+                android.util.Log.w("TvHome.Home", "Could not take the helper off the accessibility list");
+                return;
+            }
+        } catch (SecurityException denied) {
+            android.util.Log.w("TvHome.Home", "No WRITE_SECURE_SETTINGS to re-bind the helper", denied);
+            return;
+        }
+        android.util.Log.i("TvHome.Home",
+                "Re-binding the helper once after boot; " + rest.size() + " other services kept");
+        // Not the service's usageHandler: Android destroys the service when the entry comes off, and that
+        // handler drops every callback. This handler belongs to the process and outlives the unbind.
+        final Handler restoreHandler = new Handler(Looper.getMainLooper());
+        restoreHandler.postDelayed(() -> restoreHelper(restoreHandler, key, list, 0), 2000);
+    }
+
+    /** Puts the exact original list back; retries, since leaving the helper off would break Home. */
+    private void restoreHelper(Handler handler, String key, String list, int attempt) {
+        boolean restored;
+        try {
+            restored = Settings.Secure.putString(getContentResolver(), key, list);
+        } catch (SecurityException denied) {
+            restored = false;
+        }
+        if (!restored && attempt < 3) {
+            android.util.Log.w("TvHome.Home", "Restoring the accessibility list failed; retrying");
+            handler.postDelayed(() -> restoreHelper(handler, key, list, attempt + 1), 1000);
+        }
     }
 
     private void loadConfig() {
@@ -127,6 +223,7 @@ public class HomeKeyService extends AccessibilityService {
         settingsPanel = config.settingsKeyPanel;
         appKeys = RemoteKeys.parseAppKeys(config.appKeys);
         appScancodes = RemoteKeys.parseAppScancodes(config.appKeys);
+        keyFilter = config.keyFilter;
         RemoteKeys.applyKeyFilter(this, config.keyFilter);
         stockHome.clear();
         stockPackage = config.stockHomeRedirect;
@@ -149,12 +246,18 @@ public class HomeKeyService extends AccessibilityService {
         // or stock_home_redirect never receives the stock launcher's window events.
         AccessibilityServiceInfo info = getServiceInfo();
         if (info != null) {
+            // Set the flag here rather than trusting the copy from the XML metadata: at boot Android has
+            // been seen to hand back an info without it, and writing that copy back turned filtering off
+            // until the service was re-enabled by hand.
+            if (config.keyFilter) info.flags |= AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS;
+            else info.flags &= ~AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS;
             info.eventTypes = stockHome.isEmpty() ? 0 : AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED;
             info.packageNames = null;
             setServiceInfo(info);
         }
         android.util.Log.i("TvHome.Home", "Connected; stock HOME windows=" + stockHome.size()
-                + "; key filtering=" + config.keyFilter);
+                + "; key filtering=" + config.keyFilter
+                + "; flags=0x" + (info == null ? "null" : Integer.toHexString(info.flags)));
         if (!stockHome.isEmpty()) openHome("helper connected");
         usageCursor = Math.max(0, System.currentTimeMillis() - 120000);
         usageWasActive = true;

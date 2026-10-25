@@ -1,2 +1,3 @@
 e81ffbcc957a7396aedf0d9b61a53cc8  com.peter.tvhome.xmen-2.6-xmen-api23.apk
 e733019d843ff81a36dcdeae0695bfe9  com.peter.tvhome.xmen-2.6.3-xmen-api23.apk
+e286759e731a4f0adb8f25c9a3f41573  com.peter.tvhome.xmen-2.6.7-xmen-api23.apk
