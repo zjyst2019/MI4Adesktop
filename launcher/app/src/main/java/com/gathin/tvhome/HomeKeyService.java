@@ -73,8 +73,38 @@ public class HomeKeyService extends AccessibilityService {
     private static final long PROCESS_START_MS = android.os.SystemClock.elapsedRealtime();
     /** How long after boot a process can be the boot-time bind (Home needs the forced rebind then). */
     private static final long BOOT_BIND_WINDOW_MS = 5 * 60 * 1000L;
-    /** The one forced rebind has been requested: never toggle the accessibility list again in this process. */
-    private static boolean rebindRequested;
+    /** At most one forced rebind this often: a filter that did not come back must not loop the toggle. */
+    private static final long REBIND_RETRY_MS = 2 * 60 * 1000L;
+    /** The stock launcher reached the foreground: the key filter is off (after a boot, wake or idle time). */
+    private static boolean filterLost;
+    /** Uptime of the last forced rebind; starts far enough back to allow the first one at boot. */
+    private static long lastRebindAt = -REBIND_RETRY_MS;
+    /** A window change has reached this process; see the deaf check. */
+    private static boolean sawEvent;
+    /** The deaf check has run once in this process (Aerial TV issue #318: the next bind works). */
+    private static boolean deafRetried;
+    /** How long a binding can stay silent before Android is asked to bind accessibility again. */
+    private static final long DEAF_AFTER_MS = 20_000L;
+    /** The deaf check: a guard bound at boot (or switched on later) can receive no events at all. */
+    private final Runnable deafCheck = new Runnable() {
+        @Override public void run() {
+            if (sawEvent || deafRetried) return;
+            deafRetried = true;
+            restartAccessibility();
+        }
+    };
+    private boolean screenReceiverRegistered;
+    /** A wake can leave the filter off and PatchWall in front; re-bind once after the screen lights. */
+    private final BroadcastReceiver screenReceiver = new BroadcastReceiver() {
+        @Override public void onReceive(Context context, Intent intent) {
+            if (!Intent.ACTION_SCREEN_ON.equals(intent.getAction())) return;
+            filterLost = true;
+            lastRebindAt = -REBIND_RETRY_MS;   // a wake always gets one fresh bind
+            new Handler(Looper.getMainLooper())
+                    .postDelayed(HomeKeyService.this::forceRebind, 1500);
+            android.util.Log.i("TvHome.Home", "screen on; re-binding the helper after wake");
+        }
+    };
     private final Handler usageHandler = new Handler(Looper.getMainLooper());
     private final HomeForeground foreground = new HomeForeground();
     private long usageCursor;
@@ -90,6 +120,10 @@ public class HomeKeyService extends AccessibilityService {
     protected void onServiceConnected() {
         super.onServiceConnected();
         running = this;
+        if (!screenReceiverRegistered) {
+            registerReceiver(screenReceiver, new IntentFilter(Intent.ACTION_SCREEN_ON));
+            screenReceiverRegistered = true;
+        }
         settingsScancodes = getResources().getIntArray(R.array.settings_key_scancodes);
         if (Build.VERSION.SDK_INT < 24) {
             loadConfig();
@@ -129,38 +163,52 @@ public class HomeKeyService extends AccessibilityService {
         if (running == this) running = null;
         stopWaitingForUnlock();
         usageHandler.removeCallbacksAndMessages(null);
+        if (screenReceiverRegistered) {
+            unregisterReceiver(screenReceiver);
+            screenReceiverRegistered = false;
+        }
         super.onDestroy();
     }
 
     /**
-     * Makes sure the helper is actually filtering Home, called by Home from onResume. On this firmware the
-     * bind Android makes at boot leaves key filtering off: the service is listed and receives window events,
-     * but the physical Home key goes to the stock launcher, and setServiceInfo does not bring the filter
-     * back. A bind made later (the service re-enabled by hand, or after an install) does filter. So the first
-     * Home of a process started at boot asks the system to bind the helper again: it is taken off the
-     * enabled-accessibility list for two seconds and put straight back, as a manual re-enable does.
+     * Makes sure the helper is actually filtering Home, called by Home from onResume and by the redirect
+     * when the stock launcher comes up. On this firmware a bind can leave key filtering off: the service
+     * is listed and receives window events, but the physical Home key goes to the stock launcher, and
+     * setServiceInfo does not bring the filter back. A bind made later (the service re-enabled by hand, or
+     * after an install) does filter. So the helper is taken off the enabled-accessibility list for two
+     * seconds and put straight back, as a manual re-enable does: once at boot and again whenever the stock
+     * launcher proves the filter was lost (a standby/wake cycle, or idle time, can lose it).
      */
     static void ensureKeyFilter() {
         HomeKeyService service = running;
         if (service == null || !service.keyFilter) return;
         AccessibilityServiceInfo info = service.getServiceInfo();
-        // A copy written back at boot has kept the flag yet not filtered; the rebind below is what
-        // restores it. This only makes sure the request itself is never missing.
+        // A copy written back has kept the flag yet not filtered; the rebind below is what restores it.
+        // This only makes sure the request itself is never missing.
         if (info != null && (info.flags & AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS) == 0) {
             info.flags |= AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS;
             service.setServiceInfo(info);
         }
-        service.forceRebindAfterBoot();
+        service.forceRebind();
     }
 
-    /** One forced rebind per process, and only for a process that carries the boot-time bind. */
-    private void forceRebindAfterBoot() {
-        if (rebindRequested || PROCESS_START_MS >= BOOT_BIND_WINDOW_MS) return;
-        rebindRequested = true;
+    /** Re-binds for a boot-time process, or after the stock launcher showed the filter is off; throttled. */
+    private void forceRebind() {
+        long now = android.os.SystemClock.elapsedRealtime();
+        boolean bootBind = PROCESS_START_MS < BOOT_BIND_WINDOW_MS;
+        if (!bootBind && !filterLost) return;
+        if (now - lastRebindAt < REBIND_RETRY_MS) {
+            // A rebind just ran; the next stock foreground will set the flag again if it did not take.
+            filterLost = false;
+            return;
+        }
+        lastRebindAt = now;
+        filterLost = false;
+        String reason = bootBind ? "boot bind" : "filter lost";
         if (checkSelfPermission(android.Manifest.permission.WRITE_SECURE_SETTINGS)
                 != PackageManager.PERMISSION_GRANTED) {
             android.util.Log.i("TvHome.Home",
-                    "Key filtering can stay off after boot: WRITE_SECURE_SETTINGS is not granted");
+                    "Key filtering can stay off: WRITE_SECURE_SETTINGS is not granted");
             return;
         }
         ContentResolver resolver = getContentResolver();
@@ -191,24 +239,65 @@ public class HomeKeyService extends AccessibilityService {
             return;
         }
         android.util.Log.i("TvHome.Home",
-                "Re-binding the helper once after boot; " + rest.size() + " other services kept");
+                "Re-binding the helper (" + reason + "); " + rest.size() + " other services kept");
         // Not the service's usageHandler: Android destroys the service when the entry comes off, and that
         // handler drops every callback. This handler belongs to the process and outlives the unbind.
         final Handler restoreHandler = new Handler(Looper.getMainLooper());
-        restoreHandler.postDelayed(() -> restoreHelper(restoreHandler, key, list, 0), 2000);
+        restoreHandler.postDelayed(() -> restoreHelper(restoreHandler, key, 0), 2000);
     }
 
-    /** Puts the exact original list back; retries, since leaving the helper off would break Home. */
-    private void restoreHelper(Handler handler, String key, String list, int attempt) {
+    /**
+     * Puts the helper back, re-reading the list first so a service another app added during the gap
+     * is kept (Aerial TV does the same). Retries, since leaving the helper off would break Home.
+     */
+    private void restoreHelper(Handler handler, String key, int attempt) {
         boolean restored;
         try {
-            restored = Settings.Secure.putString(getContentResolver(), key, list);
+            List<String> entries = new ArrayList<>();
+            String current = Settings.Secure.getString(getContentResolver(), key);
+            if (current != null) {
+                for (String entry : current.split(":")) {
+                    if (entry.trim().isEmpty()) continue;
+                    ComponentName component = ComponentName.unflattenFromString(entry.trim());
+                    if (component != null && getPackageName().equals(component.getPackageName())
+                            && HomeKeyService.class.getName().equals(component.getClassName())) {
+                        continue;
+                    }
+                    entries.add(entry.trim());
+                }
+            }
+            entries.add(getPackageName() + "/" + HomeKeyService.class.getName());
+            restored = Settings.Secure.putString(getContentResolver(), key, TextUtils.join(":", entries));
         } catch (SecurityException denied) {
             restored = false;
         }
         if (!restored && attempt < 3) {
             android.util.Log.w("TvHome.Home", "Restoring the accessibility list failed; retrying");
-            handler.postDelayed(() -> restoreHelper(handler, key, list, attempt + 1), 1000);
+            handler.postDelayed(() -> restoreHelper(handler, key, attempt + 1), 1000);
+        }
+    }
+
+    /**
+     * Switches accessibility off and on so Android binds every service again. Rewriting the enabled
+     * list alone does not wake a binder that receives no window changes on this firmware; Aerial TV
+     * issue #318, on the same Mi TV 4, needed this switch. Once per process, 20 s after a bind that
+     * stayed silent; other accessibility services are unbound for about a second and come back.
+     */
+    private void restartAccessibility() {
+        if (checkSelfPermission(android.Manifest.permission.WRITE_SECURE_SETTINGS)
+                != PackageManager.PERMISSION_GRANTED) return;
+        try {
+            Settings.Secure.putInt(getContentResolver(), Settings.Secure.ACCESSIBILITY_ENABLED, 0);
+            new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                try {
+                    Settings.Secure.putInt(getContentResolver(), Settings.Secure.ACCESSIBILITY_ENABLED, 1);
+                } catch (SecurityException ignored) {
+                }
+            }, 1500);
+            android.util.Log.i("TvHome.Home",
+                    "No window change since bound; switching accessibility off and on");
+        } catch (SecurityException denied) {
+            android.util.Log.w("TvHome.Home", "No WRITE_SECURE_SETTINGS to restart accessibility", denied);
         }
     }
 
@@ -263,6 +352,13 @@ public class HomeKeyService extends AccessibilityService {
         usageWasActive = true;
         usageHandler.removeCallbacks(usageCheck);
         if (!stockHome.isEmpty()) usageHandler.postDelayed(usageCheck, 1000);
+        // A binding that never sends a window change is deaf on this firmware; only switching
+        // accessibility off and on brings it back (Aerial TV issue #318 on the same Mi TV 4).
+        usageHandler.removeCallbacks(deafCheck);
+        usageHandler.postDelayed(deafCheck, DEAF_AFTER_MS);
+        // MIUI can take minutes to bind this service at boot, after the launcher is already showing;
+        // that bind does not filter, and no onResume follows to ask for the rebind. Ask from here too.
+        scheduleRebind();
         holdAppKeys = RemoteKeys.parseHoldAppKeys(config.appKeys);
         holdAppScancodes = RemoteKeys.parseHoldAppScancodes(config.appKeys);
     }
@@ -311,10 +407,13 @@ public class HomeKeyService extends AccessibilityService {
 
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
+        sawEvent = true;
         // stock_home_redirect: the firmware turned the stock launcher back on and its home screen came up.
         if (stockHome.isEmpty() || event.getEventType() != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return;
         if (HomeRedirectPolicy.matches(stockPackage, stockHome,
                 event.getPackageName(), event.getClassName())) {
+            filterLost = true;
+            scheduleRebind();
             openHome("stock HOME window");
         }
     }
@@ -365,11 +464,21 @@ public class HomeKeyService extends AccessibilityService {
                 }
             }
             usageCursor = now;
-            if (foreground.takeHome(stockPackage, stockHome, now)) openHome("usage foreground (1s)");
+            if (foreground.takeHome(stockPackage, stockHome, now)) {
+                filterLost = true;
+                scheduleRebind();
+                openHome("usage foreground (1s)");
+            }
         } catch (SecurityException unavailable) {
             foreground.clear();
             usageCursor = now;
         }
+    }
+
+    /** The stock launcher just proved key filtering is off: re-bind once Home has had time to come up. */
+    private void scheduleRebind() {
+        final HomeKeyService service = this;
+        new Handler(Looper.getMainLooper()).postDelayed(service::forceRebind, 3000);
     }
 
     @Override

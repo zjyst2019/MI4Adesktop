@@ -142,7 +142,7 @@ Gradle wrapper 的 JAR 和 `gradlew` / `gradlew.bat` 都在 `launcher/gradle/wra
 - 如果电视上已经装了 `apk/` 里的版本，用新构建的 APK 覆盖安装可能报
   `INSTALL_FAILED_UPDATE_INCOMPATIBLE`（签名不一致）。先在电视的“设置 → 应用”里卸载旧版，
   再安装新包；**不要卸载 `com.mitv.tvhome`**（那是原桌面）。
-- 只想装一个可用的包、不打算改代码时，直接使用 `apk/com.peter.tvhome.xmen-2.6.7-xmen-api23.apk`
+- 只想装一个可用的包、不打算改代码时，直接使用 `apk/com.peter.tvhome.xmen-2.7.0-xmen-api23.apk`
   即可，不需要构建。
 
 ## 常见问题

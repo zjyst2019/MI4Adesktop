@@ -6,10 +6,10 @@
 这是 [CleanYourTV](https://github.com/Gathin23/cleanyourtv) 启动器的一个 API 23 移植版本。
 上游的启动器是 `minSdk 26`（Android 8.0），装不上 Android 6 的电视，所以有了这个仓库。
 
-**当前版本**：2.6.7（versionCode 14）
+**当前版本**：2.7.0（versionCode 17）
 **当前状态**：可编译、可安装；在 MiTV4A 上实体遥控器的 Home 键可接管，按 Home 不再闪 PatchWall；
-开机约 1.1 秒后切到自建桌面，且**重启后 Home 键仍持续生效**（2.6.7 修复）。原桌面保持启用，
-不卸载、不禁用、不需要 root。
+开机约 1.1 秒后切到自建桌面，且**重启、待机唤醒后 Home 键仍持续生效**（2.7.0 修复）。
+原桌面保持启用，不卸载、不禁用、不需要 root。
 
 ## 它是什么
 
@@ -55,6 +55,34 @@
 `KEY_HOME` 102）。重启后连续测试 10+ 次：日志均为 `Opened HOME: remote HOME key`，
 系统日志没有 stock HOME 启动，焦点始终回到自建桌面。
 
+### 2.7.0：deaf-bind 检测与亮屏重绑（借鉴 Aerial TV）
+
+Aerial TV 的 [issue #318](https://github.com/pengchujin/aerial-tv/issues/318) 记录了同一台
+Mi TV 4 的另一种失败：无障碍服务显示已绑定，却收不到任何窗口事件；**只重写
+`enabled_accessibility_services` 不够，必须把 `accessibility_enabled` 关掉再打开**。
+2.7.0 采用了 Aerial 的两条做法，并补了一处列表恢复：
+
+- 服务绑定后 **20 秒内没有收到任何窗口事件**：把 `accessibility_enabled` 置 0，1.5 秒后
+  置 1，让 Android 重新绑定所有无障碍服务。每进程只做一次；其他无障碍服务会短暂断开
+  约 1.5 秒再回来。
+- 注册 `ACTION_SCREEN_ON`：**待机唤醒后 1.5 秒强制重绑一次**，避免唤醒后 Home 又落到
+  PatchWall。
+- 重绑间隙结束、恢复列表时**重新读取** `enabled_accessibility_services`，保留期间其他
+  App 新增的服务，再追加本服务。
+
+实测（MiTV4A）：重启后和待机唤醒后，Raw Home 都由助手直接消费，系统日志 0 次 stock
+HOME 启动，焦点回到自建桌面。关键日志：
+
+```text
+screen on; re-binding the helper after wake
+No window change since bound; switching accessibility off and on
+```
+
+Aerial TV 本身也试装过（v1.57，2.83 MiB）。它的桌面/航拍屏保可用，但在这台 1 GB 电视上
+前台 PSS 约 161 MB（本移植版约 59 MB），且它的 Home Guard 在这台固件上仍会先闪一下
+PatchWall；它还会通过同步/复活机制把自己重新加回无障碍列表，无法和本移植版的助手共存，
+所以试完已卸载，Home 继续由本移植版接管。
+
 ## 编译
 
 仓库包含全部源码、Gradle wrapper（JAR + Gradle 8.9 的 sha256）、JVM 测试和构建脚本；
@@ -92,7 +120,7 @@ Gradle wrapper 固定在 8.9 并校验 sha256。Release 产物在
 
 ```bash
 adb connect <tv ip>:5555
-adb install -r apk/com.peter.tvhome.xmen-2.6.7-xmen-api23.apk
+adb install -r apk/com.peter.tvhome.xmen-2.7.0-xmen-api23.apk
 
 # 先当普通应用打开（不会抢 Home）
 adb shell am start -n com.peter.tvhome.xmen/com.gathin.tvhome.MainActivity
@@ -122,7 +150,7 @@ adb shell settings put secure enabled_accessibility_services \
 # 3. 授予使用情况访问（UsageStats 兜底）
 adb shell appops set com.peter.tvhome.xmen GET_USAGE_STATS allow
 
-# 4. 授予安全设置写入权限（2.6.7 开机后强制重绑一次无障碍服务）
+# 4. 授予安全设置写入权限（2.7.0 开机/唤醒后重绑无障碍服务）
 adb shell pm grant com.peter.tvhome.xmen android.permission.WRITE_SECURE_SETTINGS
 ```
 
@@ -154,7 +182,7 @@ adb shell dumpsys activity activities | grep mResumedActivity
 
 | 项目 | 结果 |
 |---|---|
-| 版本 | 2.6.7 / versionCode 14 |
+| 版本 | 2.7.0 / versionCode 17 |
 | 安装 | `pm install` Success（电视上按一次安装确认） |
 | 启动 | 正常，中文界面完整渲染 |
 | 应用库 | 识别到 21 个应用，带“添加到主屏幕 / 已在主屏幕”状态 |
@@ -162,15 +190,16 @@ adb shell dumpsys activity activities | grep mResumedActivity
 | D-pad 四向 | RIGHT / LEFT / DOWN / UP 焦点均不丢失 |
 | 实体 Home | 直接进入自建桌面，PatchWall 不出现 |
 | 开机 | 原桌面启动后约 1.1 秒切换；机主确认几乎看不到 PatchWall |
-| 重启后 Home | 2.6.7 重启后从 App 里按 Home 仍由助手消费，PatchWall 不出现；连续 10+ 次一致 |
+| 重启后 Home | 2.7.0 重启后从 App 里按 Home 仍由助手消费，PatchWall 不出现；连续 10+ 次一致 |
+| 待机唤醒后 Home | 日志出现 `screen on; re-binding the helper after wake`；唤醒后按 Home 仍由助手消费，0 次 stock HOME |
 | 音量连发 | 长按音量可连续调节 |
 | 重启 | Home 助手、使用情况访问、`WRITE_SECURE_SETTINGS` 均自动保留 |
 | 崩溃 | logcat 未发现 FATAL / AndroidRuntime 异常 |
 | 系统包 | 没有禁用或卸载任何系统包；原桌面仍启用 |
 | JVM 测试 / lint | 195 个测试通过；lint 0 Error |
-| APK | 709,414 字节（692.8 KiB） |
-| MD5 | `e286759e731a4f0adb8f25c9a3f41573` |
-| SHA-256 | `6cc8323998d28d4ea992bd3674037d201f6a2978724cd5cee160e560b717d424` |
+| APK | 710,242 字节（693.6 KiB） |
+| MD5 | `5ce1e4230a1185272868cb2da4a82fb6` |
+| SHA-256 | `298f06ea86dd713dffd88e0a0d688cf4dba3dce59bc755f40d647318d76b809b` |
 
 APK 使用调试密钥签名，只适合 sideload 到自己的电视，不要发布到应用商店。
 
@@ -236,7 +265,8 @@ launcher/                  启动器源码
 apk/
   com.peter.tvhome.xmen-2.6-xmen-api23.apk    历史版本
   com.peter.tvhome.xmen-2.6.3-xmen-api23.apk  历史版本
-  com.peter.tvhome.xmen-2.6.7-xmen-api23.apk  当前版本
+  com.peter.tvhome.xmen-2.6.7-xmen-api23.apk  历史版本
+  com.peter.tvhome.xmen-2.7.0-xmen-api23.apk  当前版本
   MD5SUMS.txt                                  APK 校验值
 docs/
   BUILD.md                   从零构建与外部依赖说明

@@ -66,6 +66,29 @@ Verified after a real reboot: raw evdev Home presses from inside an app logged
 10+ cycles. The 2.6.7 APK in `apk/` built from this source; the package installed on the TV was
 built from the same source in the port tree (same size, different zip/timestamp MD5).
 
+## 2026-10-26 late: 2.7.0, deaf bind and wake re-bind
+
+A second failure mode, reported by Aerial TV issue #318 on the same Mi TV 4: the accessibility
+binding can be "deaf" — listed and bound, yet no window change ever arrives, and rewriting
+`enabled_accessibility_services` alone does not fix it; only switching
+`accessibility_enabled` off and on does. 2.7.0 / versionCode 17 adds:
+
+- a 20 s no-window-event check that toggles `accessibility_enabled` 0 -> 1 (1.5 s gap) once
+  per process; other accessibility services unbind briefly and come back;
+- an `ACTION_SCREEN_ON` receiver that forces one fresh bind 1.5 s after the screen lights,
+  because the firmware leaves the filter off across standby/wake;
+- a re-read of the enabled-services list before restoring the helper, so a service another
+  app added meanwhile is kept.
+
+Verified on the MiTV4A after a reboot and after a standby/wake: the log shows
+`screen on; re-binding the helper after wake`, a raw evdev Home press logs
+`Opened HOME: remote HOME key`, no stock HOME starts, and focus returns to this port.
+
+Aerial TV 1.57 itself (2.83 MiB) was installed and tried on this TV. It runs, but its Home
+Guard still lets PatchWall flash first on this firmware, uses about 161 MB PSS against this
+port's ~59 MB, and re-adds itself through its sync revival, so it cannot share Home duty with
+this port. It was uninstalled; the port's helper stays.
+
 ## Blocked: all shell disable channels
 
 | Channel | Result |

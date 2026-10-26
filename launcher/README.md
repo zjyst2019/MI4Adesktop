@@ -150,6 +150,16 @@ The independent port now includes a local UsageStats fallback in HomeKeyService:
   inside an app (the same input device as the remote; `input keyevent` bypasses
   accessibility filtering and proves nothing): `Opened HOME: remote HOME key`, no
   stock-Home launch, focus back on this port, over 10+ cycles.
+- **2.7.0 borrows Aerial TV's deaf-bind fix and adds a wake re-bind.** On the same Mi
+  TV 4, Aerial TV issue #318 found that a binding can be bound yet receive no window
+  events at all, and rewriting `enabled_accessibility_services` alone does not wake it;
+  only switching `accessibility_enabled` off and on does. After 20 s without a window
+  event this helper does that once per process (other accessibility services unbind for
+  about 1.5 s and come back). It also registers `ACTION_SCREEN_ON` and forces one fresh
+  bind 1.5 s after the screen lights, so Home keeps filtering after standby/wake. The
+  restore step re-reads the enabled-services list before appending the helper, keeping a
+  service another app added during the gap. Verified on the target TV after a reboot and
+  after a standby/wake: `Opened HOME: remote HOME key`, no stock-Home launch.
 - On-device HOME injection (this does not exercise key_filter): a three-second screenshot
   showed stock Home, later focus showed this port; log recorded `usage foreground (1s)`.
   Settings stayed in front for a 12-second observation. The physical remote with
